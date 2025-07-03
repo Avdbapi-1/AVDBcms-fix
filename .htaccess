@@ -13,3 +13,10 @@ RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 #	php_value post_max_size 5000M
 #	php_value max_execution_time 20000
 #	php_value max_input_time 20000
+
+# Tăng thời gian thực thi cho crawl
+php_value max_execution_time 0
+php_value memory_limit 256M
+php_value max_input_time 0
+php_value post_max_size 50M
+php_value upload_max_filesize 50M

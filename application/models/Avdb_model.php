@@ -101,8 +101,12 @@ class Avdb_model extends CI_Model
         $isExist = $this->common_model->tmdb_exist($data['id']);
 
         if ($isExist) { // Update
-            $videos_id = $this->db->get_where('videos', array('writer' => $data['movie_code']))->row()->writer;
-            $this->db->where('writer', $writer);
+            $row = $this->db->get_where('videos', array('writer' => $data['movie_code']))->row();
+            if (!$row) {
+                return 'Không tìm thấy videos_id để update cho CODE: '.$data['movie_code'];
+            }
+            $videos_id = $row->videos_id;
+            $this->db->where('videos_id', $videos_id);
             $this->db->delete('video_file');
 
             $episodes = $data['episodes']['server_data'];
@@ -135,6 +139,8 @@ class Avdb_model extends CI_Model
             $movie_data['enable_download'] = '0';
             $movie_data['trailler_youtube_source'] = '';
             $movie_data['is_paid'] = '0';
+            $movie_data['poster_url'] = $data['poster_url'];
+            $movie_data['thumb_url'] = $data['thumb_url'];
             $this->db->insert('videos', $movie_data);
             $insert_id = $this->db->insert_id();
 
@@ -146,15 +152,6 @@ class Avdb_model extends CI_Model
             }
             $this->db->where('videos_id', $insert_id);
             $this->db->update('videos', ['slug' => $slug]);
-
-            // save thumbnail
-            $image_source = $data['thumb_url'];
-            $save_to = 'uploads/video_thumb/' . $insert_id . '.jpg';
-            $this->common_model->grab_image($image_source, $save_to);
-            // save poster
-            $image_source = $data['poster_url'];
-            $save_to = 'uploads/poster_image/' . $insert_id . '.jpg';
-            $this->common_model->grab_image($image_source, $save_to);
 
             // Episodes
             $episodes = $data['episodes']['server_data'];
@@ -248,5 +245,163 @@ class Avdb_model extends CI_Model
             $str .= $characters[$rand];
         }
         return $str;
+    }
+
+    // --- HÀM CHÍNH: XỬ LÝ BATCH VÀ LOG CHUẨN ---
+    private function process_batch($movies, $offset, $batch_size, &$log, &$done, &$total) {
+        $total = count($movies);
+        $done = min($offset + $batch_size, $total);
+        $log_batch = [];
+        for ($i = $offset; $i < $done; $i++) {
+            $movie = $movies[$i];
+            try {
+                $msg = $this->insert_or_update_movie($movie);
+                // Chỉ lấy ID, CODE, trạng thái
+                if (preg_match('/ID: (.*?) CODE: (.*?) => (.*)/', $msg, $m)) {
+                    $log_batch[] = 'ID: ' . $m[1] . ' | CODE: ' . $m[2] . ' | ' . $m[3];
+                } else {
+                    $log_batch[] = $msg;
+                }
+            } catch (Exception $e) {
+                $log_batch[] = 'Lỗi: ' . $e->getMessage();
+            }
+        }
+        $log = $log_batch;
+        return ($done < $total); // còn phim chưa xử lý
+    }
+
+    // --- CRAWL THEO CATEGORY ---
+    function crawl_by_category($category_id) {
+        $batch_size = isset($_POST['batch_size']) ? (int)$_POST['batch_size'] : 50;
+        $offset = isset($_POST['offset']) ? (int)$_POST['offset'] : 0;
+        $page = isset($_POST['page']) ? (int)$_POST['page'] : 1;
+        set_time_limit(0);
+        ini_set('memory_limit', '512M');
+        $api_url = $this->api . "/?ac=detail&t=" . $category_id . "&pg=" . $page;
+        $data = @file_get_contents($api_url);
+        $log = [];
+        if ($data === false) return ['status'=>'fail','log'=>['Lỗi API'],'has_more'=>false,'done'=>0,'total'=>0,'page'=>$page];
+        $data = json_decode($data, true);
+        if (empty($data) || $data['code'] != 1 || !isset($data['list'])) return ['status'=>'fail','log'=>['API trả về không hợp lệ'],'has_more'=>false,'done'=>0,'total'=>0,'page'=>$page];
+        $movies = $data['list'];
+        $total = count($movies);
+        $done = 0;
+        $has_more = $this->process_batch($movies, $offset, $batch_size, $log, $done, $total);
+        return [
+            'status' => 'success',
+            'log' => $log,
+            'has_more' => $has_more,
+            'done' => $done,
+            'total' => $total,
+            'page' => $page + ($has_more ? 0 : 1)
+        ];
+    }
+
+    // --- CRAWL ALL AUTO ---
+    public function crawl_all_auto() {
+        $batch_size = isset($_POST['batch_size']) ? (int)$_POST['batch_size'] : 50;
+        $offset = isset($_POST['offset']) ? (int)$_POST['offset'] : 0;
+        $page = isset($_POST['page']) ? (int)$_POST['page'] : 1;
+        set_time_limit(0);
+        ini_set('memory_limit', '512M');
+        $api_url = $this->api . "/?ac=detail&pg=" . $page;
+        $data = @file_get_contents($api_url);
+        $log = [];
+        if ($data === false) return ['status'=>'fail','log'=>['Lỗi API'],'has_more'=>false,'done'=>0,'total'=>0,'page'=>$page];
+        $data = json_decode($data, true);
+        if (empty($data) || !isset($data['list'])) return ['status'=>'fail','log'=>['API trả về không hợp lệ'],'has_more'=>false,'done'=>0,'total'=>0,'page'=>$page];
+        $movies = $data['list'];
+        $total = count($movies);
+        $done = 0;
+        $has_more = $this->process_batch($movies, $offset, $batch_size, $log, $done, $total);
+        return [
+            'status' => 'success',
+            'log' => $log,
+            'has_more' => $has_more,
+            'done' => $done,
+            'total' => $total,
+            'page' => $page + ($has_more ? 0 : 1)
+        ];
+    }
+
+    // --- CRAWL PAGE RANGE ---
+    public function crawl_page_range($start, $end) {
+        $batch_size = isset($_POST['batch_size']) ? (int)$_POST['batch_size'] : 50;
+        $offset = isset($_POST['offset']) ? (int)$_POST['offset'] : 0;
+        $page = isset($_POST['page']) ? (int)$_POST['page'] : $start;
+        set_time_limit(0);
+        ini_set('memory_limit', '512M');
+        $api_url = $this->api . "/?ac=detail&pg=" . $page;
+        $data = @file_get_contents($api_url);
+        $log = [];
+        if ($data === false) return ['status'=>'fail','log'=>['Lỗi API'],'has_more'=>false,'done'=>0,'total'=>0,'page'=>$page];
+        $data = json_decode($data, true);
+        if (empty($data) || !isset($data['list'])) return ['status'=>'fail','log'=>['API trả về không hợp lệ'],'has_more'=>false,'done'=>0,'total'=>0,'page'=>$page];
+        $movies = $data['list'];
+        $total = count($movies);
+        $done = 0;
+        $has_more = $this->process_batch($movies, $offset, $batch_size, $log, $done, $total);
+        $next_page = $page;
+        if (!$has_more && $page < $end) $next_page = $page + 1;
+        return [
+            'status' => 'success',
+            'log' => $log,
+            'has_more' => $has_more || ($page < $end),
+            'done' => $done,
+            'total' => $total,
+            'page' => $next_page
+        ];
+    }
+
+    // --- CRAWL BY KEYWORD ---
+    public function crawl_by_keyword($keyword) {
+        $batch_size = isset($_POST['batch_size']) ? (int)$_POST['batch_size'] : 50;
+        $offset = isset($_POST['offset']) ? (int)$_POST['offset'] : 0;
+        $page = isset($_POST['page']) ? (int)$_POST['page'] : 1;
+        set_time_limit(0);
+        ini_set('memory_limit', '512M');
+        $api_url = $this->api . "/?ac=detail&wd=" . urlencode($keyword) . "&pg=" . $page;
+        $data = @file_get_contents($api_url);
+        $log = [];
+        if ($data === false) return ['status'=>'fail','log'=>['Lỗi API'],'has_more'=>false,'done'=>0,'total'=>0,'page'=>$page];
+        $data = json_decode($data, true);
+        if (empty($data) || !isset($data['list'])) return ['status'=>'fail','log'=>['API trả về không hợp lệ'],'has_more'=>false,'done'=>0,'total'=>0,'page'=>$page];
+        $movies = $data['list'];
+        $total = count($movies);
+        $done = 0;
+        $has_more = $this->process_batch($movies, $offset, $batch_size, $log, $done, $total);
+        return [
+            'status' => 'success',
+            'log' => $log,
+            'has_more' => $has_more,
+            'done' => $done,
+            'total' => $total,
+            'page' => $page + ($has_more ? 0 : 1)
+        ];
+    }
+
+    // --- CRAWL BY ID ---
+    public function crawl_by_id($id) {
+        $batch_size = isset($_POST['batch_size']) ? (int)$_POST['batch_size'] : 50;
+        $offset = isset($_POST['offset']) ? (int)$_POST['offset'] : 0;
+        set_time_limit(0);
+        ini_set('memory_limit', '512M');
+        $api_url = $this->api . "/?ac=detail&ids=" . $id;
+        $data = @file_get_contents($api_url);
+        $log = [];
+        if ($data === false) return ['status'=>'fail','log'=>['Lỗi API'],'has_more'=>false,'done'=>0,'total'=>0];
+        $data = json_decode($data, true);
+        if (empty($data) || !isset($data['list'])) return ['status'=>'fail','log'=>['API trả về không hợp lệ'],'has_more'=>false,'done'=>0,'total'=>0];
+        $movies = $data['list'];
+        $total = count($movies);
+        $done = 0;
+        $has_more = $this->process_batch($movies, $offset, $batch_size, $log, $done, $total);
+        return [
+            'status' => 'success',
+            'log' => $log,
+            'has_more' => $has_more,
+            'done' => $done,
+            'total' => $total
+        ];
     }
 }

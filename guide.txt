@@ -1,0 +1,139 @@
+HƯỚNG DẪN SỬA CODE HIỂN THỊ ẢNH VIDEO (THUMB/POSTER) VÀ ĐỔI CRAWL AVDB
+
+─────────────────────────────
+PHẦN 1: SỬA CODE HIỂN THỊ ẢNH VIDEO (THUMB/POSTER)
+─────────────────────────────
+
+1. Mục tiêu:
+- Luôn ưu tiên lấy ảnh từ trường `thumb_url` trong bảng `videos`.
+- Nếu `thumb_url` rỗng thì lấy `poster_url`.
+- Nếu cả hai đều rỗng thì dùng ảnh mặc định (ví dụ: `uploads/default_image/poster.jpg`).
+- Không sử dụng trường `thumbnail_url` hoặc các hàm như `get_video_thumb_url`, `get_video_poster_url` nữa.
+
+2. Danh sách file cần thay đổi:
+
+─────────────────────────────
+application/views/theme/missav/blog_sidebar.php
+─────────────────────────────
+- Vị trí: Phần hiển thị Top View Today hoặc các video sidebar.
+- Sửa dòng lấy ảnh:
+<img src="<?php echo !empty($video->thumb_url) ? $video->thumb_url : (!empty($video->poster_url) ? $video->poster_url : base_url('uploads/default_image/poster.jpg')); ?>"
+     alt="<?php echo $video->title;?>" width="60" style="border-radius:6px;">
+
+─────────────────────────────
+application/views/theme/missav/watch.php
+─────────────────────────────
+- Vị trí: Phần hiển thị ảnh video (poster/thumbnail) trong trang xem phim.
+- Sửa dòng lấy ảnh:
+<img class="w-full h-auto aspect-video" alt="<?php echo $videos['title']; ?>"
+     src="<?php
+         echo !empty($videos['thumb_url'])
+             ? $videos['thumb_url']
+             : (!empty($videos['poster_url'])
+                 ? $videos['poster_url']
+                 : base_url('uploads/default_image/poster.jpg'));
+     ?>">
+
+─────────────────────────────
+application/views/theme/missav/thumbnail.php
+─────────────────────────────
+- Vị trí: Dòng lấy ảnh thumbnail cho từng video.
+- Sửa lại như sau:
+<img class="w-full h-auto aspect-video" alt="<?php echo $videos['title']; ?>"
+     src="<?php
+         echo !empty($videos['thumb_url'])
+             ? $videos['thumb_url']
+             : (!empty($videos['poster_url'])
+                 ? $videos['poster_url']
+                 : base_url('uploads/default_image/poster.jpg'));
+     ?>">
+
+─────────────────────────────
+application/views/theme/missav/main_slider.php
+─────────────────────────────
+- Vị trí: Dòng lấy ảnh nền cho từng slide phim.
+- Sửa lại như sau:
+<div class="swiper-slide" style="background-image: url('<?php
+    echo !empty($videos->thumb_url)
+        ? $videos->thumb_url
+        : (!empty($videos->poster_url)
+            ? $videos->poster_url
+            : base_url('uploads/default_image/poster.jpg'));
+?>');">
+
+─────────────────────────────
+Lưu ý:
+- Nếu các file khác cũng lấy ảnh video, hãy áp dụng đúng logic trên.
+- Không dùng lại các hàm cũ như $this->common_model->get_video_thumb_url(...) hoặc $this->common_model->get_video_poster_url(...) nữa.
+- Đảm bảo dữ liệu trong database trường thumb_url và poster_url là link ảnh hợp lệ.
+
+─────────────────────────────
+Nếu cần đồng bộ cho theme default:
+- Làm tương tự với các file trong application/views/theme/default/ như: watch.php, thumbnail.php, main_slider.php, v.v.
+
+─────────────────────────────
+Kết luận:
+Chỉ cần thay đúng dòng lấy ảnh như hướng dẫn trên, giữ nguyên các cấu trúc HTML/PHP khác.
+
+─────────────────────────────
+
+PHẦN 2: HƯỚNG DẪN ĐỔI VÀ SỬA CHỨC NĂNG CRAWL AVDB (API AVDB)
+─────────────────────────────
+
+1. Mục tiêu:
+- Crawl phim từ AVDB API về database, lưu đầy đủ các trường, đặc biệt là thumb_url, poster_url.
+- Hỗ trợ crawl theo từ khóa, theo ID, hoặc tự động nhiều trang.
+- Đảm bảo dữ liệu lưu vào bảng `videos` đúng cấu trúc.
+
+2. Các bước thực hiện:
+
+─────────────────────────────
+Bước 1: Sửa model crawl (thường là application/models/Avdb_model.php)
+─────────────────────────────
+- Đảm bảo hàm crawl lấy đúng các trường từ API AVDB, đặc biệt là `thumb_url`, `poster_url`.
+- Khi insert/update vào bảng `videos`, phải lưu đầy đủ các trường này.
+
+Ví dụ:
+$movie_data['thumb_url'] = $data['thumb_url'];
+$movie_data['poster_url'] = $data['poster_url'];
+// ... các trường khác ...
+$this->db->insert('videos', $movie_data);
+
+─────────────────────────────
+Bước 2: Sửa controller crawl (thường là application/controllers/Admin.php hoặc Home.php)
+─────────────────────────────
+- Thêm các hàm crawl theo từ khóa, theo ID, hoặc tự động nhiều trang.
+- Đảm bảo gọi đúng hàm model và truyền tham số từ giao diện.
+
+─────────────────────────────
+Bước 3: Sửa giao diện (view) để nhập từ khóa, ID hoặc chọn crawl tự động
+─────────────────────────────
+- Thêm form nhập keyword, ID hoặc nút crawl tự động.
+- Gửi request về controller để thực hiện crawl.
+
+─────────────────────────────
+Bước 4: Kiểm tra lại dữ liệu
+─────────────────────────────
+- Sau khi crawl, kiểm tra bảng `videos` đảm bảo các trường `thumb_url`, `poster_url` đã có dữ liệu.
+- Kiểm tra hiển thị ảnh ở các trang (xem phim, sidebar, slider...) đã đúng chưa.
+
+─────────────────────────────
+Bước 5: Xử lý lỗi (nếu có)
+─────────────────────────────
+- Nếu không lưu được ảnh, kiểm tra lại code lấy dữ liệu từ API và code insert vào database.
+- Nếu ảnh không hiển thị, kiểm tra lại link ảnh trong database và code view.
+
+─────────────────────────────
+Ví dụ API AVDB:
+─────────────────────────────
+- Crawl theo page: https://avdbapi.com/api.php/provide/vod/?ac=detail&pg=1
+- Crawl theo ID: https://avdbapi.com/api.php/provide/vod/?ac=detail&ids=221138
+- Crawl theo keyword: https://avdbapi.com/api.php/provide/vod/?ac=detail&wd=fc2-ppv-1766968
+
+─────────────────────────────
+Kết luận:
+- Luôn kiểm tra kỹ dữ liệu trả về từ API và dữ liệu lưu vào database.
+- Ưu tiên lấy ảnh từ thumb_url, nếu không có thì poster_url.
+- Nếu cần crawl nâng cao, có thể thêm log, phân trang, hoặc crawl theo nhiều tiêu chí.
+
+─────────────────────────────

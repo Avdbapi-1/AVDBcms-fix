@@ -132,7 +132,13 @@
                 <div class="relative aspect-video rounded overflow-hidden shadow-lg w-[165px]">
                     <a href="<?php echo base_url('watch/' . $videos['slug']) . '.html'; ?>" alt="<?php echo $videos['title']; ?>">
                         <img class="w-full h-auto aspect-video" alt="<?php echo $videos['title']; ?>"
-                            src="<?php echo $this->common_model->get_video_poster_url($videos['videos_id']); ?>">
+                            src="<?php
+                                echo !empty($videos['thumb_url'])
+                                    ? $videos['thumb_url']
+                                    : (!empty($videos['poster_url'])
+                                        ? $videos['poster_url']
+                                        : base_url('uploads/default_image/poster.jpg'));
+                            ?>">
                     </a>
                     <a href="<?php echo base_url('watch/' . $videos['slug']) . '.html'; ?>" alt="<?php echo $videos['title']; ?>">
                         <span class="absolute bottom-1 right-1 rounded-lg px-2 py-1 text-xs text-nord5 bg-gray-800 bg-opacity-75"><?php echo $videos['runtime']; ?></span>

@@ -902,12 +902,7 @@ class Admin extends Admin_Core_Controller
             if ($this->input->post('thumb_link') != '') {
                 $image_source = $this->input->post('thumb_link');
                 $save_to = 'uploads/video_thumb/' . $param2 . '.jpg';
-                //$this->common_model->grab_image($image_source,$save_to);
-                $cron_data['type'] = "image";
-                $cron_data['action'] = "download";
-                $cron_data['image_url'] = $image_source;
-                $cron_data['save_to'] = $save_to;
-                $this->db->insert('cron', $cron_data);
+                $this->common_model->grab_image($image_source, $save_to);
             }
 
             if ($this->input->post('poster_link') != '') {
@@ -5224,5 +5219,99 @@ class Admin extends Admin_Core_Controller
         $data['page_name'] = 'report_manage';
         $data['page_title'] = 'Report Manage';
         $this->load->view('admin/index', $data);
+    }
+
+    // Sửa endpoint crawl_avdb_by_links
+    public function crawl_avdb_by_links()
+    {
+        if ($this->session->userdata('admin_is_login') != 1)
+            redirect(base_url(), 'refresh');
+        $api_url = $this->input->post('api_url'); // Nhận link API cụ thể
+        if (empty($api_url)) {
+            echo json_encode(['status' => 'fail', 'log' => ['Không có link API nào được gửi lên!']]);
+            exit();
+        }
+        $this->load->model('avdb_model');
+        $result = $this->avdb_model->crawl_by_api_links($api_url);
+        echo json_encode($result);
+        exit();
+    }
+
+    // Thêm endpoint crawl theo category
+    public function crawl_by_category()
+    {
+        if ($this->session->userdata('admin_is_login') != 1)
+            redirect(base_url(), 'refresh');
+        
+        $category_id = $this->input->post('category_id');
+        if (empty($category_id)) {
+            echo json_encode(['status' => 'fail', 'log' => ['Không có category ID nào được gửi lên!']]);
+            exit();
+        }
+        
+        // Thêm debug log
+        error_log("DEBUG: Bắt đầu crawl category $category_id");
+        
+        $this->load->model('avdb_model');
+        $result = $this->avdb_model->crawl_by_category($category_id);
+        
+        // Thêm debug log
+        error_log("DEBUG: Kết quả crawl category $category_id: " . json_encode($result));
+        
+        echo json_encode($result);
+        exit();
+    }
+
+    // Crawl toàn bộ tự động
+    public function crawl_avdb_auto_all() {
+        if ($this->session->userdata('admin_is_login') != 1)
+            redirect(base_url(), 'refresh');
+        $this->load->model('avdb_model');
+        $result = $this->avdb_model->crawl_all_auto();
+        echo json_encode($result);
+        exit();
+    }
+    // Crawl theo khoảng trang
+    public function crawl_avdb_page_range() {
+        if ($this->session->userdata('admin_is_login') != 1)
+            redirect(base_url(), 'refresh');
+        $start = (int)$this->input->post('start');
+        $end = (int)$this->input->post('end');
+        if ($start < 1 || $end < $start) {
+            echo json_encode(['status' => 'fail', 'log' => ['Số trang không hợp lệ!']]);
+            exit();
+        }
+        $this->load->model('avdb_model');
+        $result = $this->avdb_model->crawl_page_range($start, $end);
+        echo json_encode($result);
+        exit();
+    }
+
+    public function crawl_by_keyword() {
+        if ($this->session->userdata('admin_is_login') != 1)
+            redirect(base_url(), 'refresh');
+        $keyword = $this->input->post('keyword');
+        if (empty($keyword)) {
+            echo json_encode(['status' => 'fail', 'log' => ['Chưa nhập từ khóa!']]);
+            exit();
+        }
+        $this->load->model('avdb_model');
+        $result = $this->avdb_model->crawl_by_keyword($keyword);
+        echo json_encode($result);
+        exit();
+    }
+
+    public function crawl_by_id() {
+        if ($this->session->userdata('admin_is_login') != 1)
+            redirect(base_url(), 'refresh');
+        $id = $this->input->post('id');
+        if (empty($id)) {
+            echo json_encode(['status' => 'fail', 'log' => ['Chưa nhập ID!']]);
+            exit();
+        }
+        $this->load->model('avdb_model');
+        $result = $this->avdb_model->crawl_by_id($id);
+        echo json_encode($result);
+        exit();
     }
 }
