@@ -101,8 +101,12 @@ class Avdb_model extends CI_Model
         $isExist = $this->common_model->tmdb_exist($data['id']);
 
         if ($isExist) { // Update
-            $videos_id = $this->db->get_where('videos', array('writer' => $data['movie_code']))->row()->writer;
-            $this->db->where('writer', $writer);
+            $row = $this->db->get_where('videos', array('writer' => $data['movie_code']))->row();
+            if (!$row) {
+                return 'Không tìm thấy videos_id để update cho CODE: '.$data['movie_code'];
+            }
+            $videos_id = $row->videos_id;
+            $this->db->where('videos_id', $videos_id);
             $this->db->delete('video_file');
 
             $episodes = $data['episodes']['server_data'];
@@ -135,6 +139,8 @@ class Avdb_model extends CI_Model
             $movie_data['enable_download'] = '0';
             $movie_data['trailler_youtube_source'] = '';
             $movie_data['is_paid'] = '0';
+            $movie_data['poster_url'] = $data['poster_url'];
+            $movie_data['thumb_url'] = $data['thumb_url'];
             $this->db->insert('videos', $movie_data);
             $insert_id = $this->db->insert_id();
 
@@ -146,15 +152,6 @@ class Avdb_model extends CI_Model
             }
             $this->db->where('videos_id', $insert_id);
             $this->db->update('videos', ['slug' => $slug]);
-
-            // save thumbnail
-            $image_source = $data['thumb_url'];
-            $save_to = 'uploads/video_thumb/' . $insert_id . '.jpg';
-            $this->common_model->grab_image($image_source, $save_to);
-            // save poster
-            $image_source = $data['poster_url'];
-            $save_to = 'uploads/poster_image/' . $insert_id . '.jpg';
-            $this->common_model->grab_image($image_source, $save_to);
 
             // Episodes
             $episodes = $data['episodes']['server_data'];
@@ -249,4 +246,97 @@ class Avdb_model extends CI_Model
         }
         return $str;
     }
+
+    // --- HÀM HELPER: XỬ LÝ CHÍNH CHO VIỆC CRAWL TỪNG TRANG ---
+    private function _crawl_single_page($api_url) {
+        set_time_limit(300); // 5 phút cho mỗi trang
+        ini_set('memory_limit', '512M');
+
+        $data = @file_get_contents($api_url);
+        if ($data === false || ($data = json_decode($data, true)) === null || !isset($data['list']) || empty($data['list'])) {
+            return ['status' => 'fail', 'log' => ['API lỗi hoặc trang không có dữ liệu.'], 'has_more' => false];
+        }
+        
+        $log = [];
+        foreach($data['list'] as $movie) {
+            try {
+                $msg = $this->insert_or_update_movie($movie);
+                if (preg_match('/ID: (.*?) CODE: (.*?) => (.*)/', $msg, $m)) {
+                    $log[] = 'ID: ' . $m[1] . ' | CODE: ' . $m[2] . ' | ' . $m[3];
+                } else {
+                    $log[] = $msg;
+                }
+            } catch (Exception $e) {
+                $log[] = 'Lỗi xử lý phim: ' . $e->getMessage();
+            }
+        }
+        
+        $page = isset($data['page']) ? (int)$data['page'] : 1;
+        $pagecount = isset($data['pagecount']) ? (int)$data['pagecount'] : $page;
+
+        return [
+            'status' => 'success',
+            'log' => $log,
+            'has_more' => ($page < $pagecount),
+            'page' => $page,
+            'pagecount' => $pagecount
+        ];
+    }
+
+    // --- CRAWL THEO CATEGORY ---
+    function crawl_by_category($category_id) {
+        $page = isset($_POST['page']) ? (int)$_POST['page'] : 1;
+        $api_url = $this->api . "/?ac=detail&t=" . $category_id . "&pg=" . $page;
+        return $this->_crawl_single_page($api_url);
+    }
+
+    // --- CRAWL ALL AUTO ---
+    public function crawl_all_auto() {
+        $page = isset($_POST['page']) ? (int)$_POST['page'] : 1;
+        $api_url = $this->api . "/?ac=detail&pg=" . $page;
+        return $this->_crawl_single_page($api_url);
+    }
+
+    // --- CRAWL PAGE RANGE ---
+    public function crawl_page_range($start, $end) {
+        $page = isset($_POST['page']) ? (int)$_POST['page'] : $start;
+        if ($page > $end) {
+            return ['status' => 'fail', 'log' => ['Đã hoàn thành crawl đến trang ' . $end], 'has_more' => false];
+        }
+        $api_url = $this->api . "/?ac=detail&pg=" . $page;
+        return $this->_crawl_single_page($api_url);
+    }
+
+    // --- CRAWL BY KEYWORD ---
+    public function crawl_by_keyword($keyword) {
+        $page = isset($_POST['page']) ? (int)$_POST['page'] : 1;
+        $api_url = $this->api . "/?ac=detail&wd=" . urlencode($keyword) . "&pg=" . $page;
+        return $this->_crawl_single_page($api_url);
+    }
+    
+    // --- CRAWL BY ID (không thay đổi logic) ---
+    public function crawl_by_id($id) {
+        $batch_size = isset($_POST['batch_size']) ? (int)$_POST['batch_size'] : 50;
+        $offset = isset($_POST['offset']) ? (int)$_POST['offset'] : 0;
+        set_time_limit(0);
+        ini_set('memory_limit', '512M');
+        $api_url = $this->api . "/?ac=detail&ids=" . $id;
+        $data = @file_get_contents($api_url);
+        $log = [];
+        if ($data === false) return ['status'=>'fail','log'=>['Lỗi API'],'has_more'=>false,'done'=>0,'total'=>0];
+        $data = json_decode($data, true);
+        if (empty($data) || !isset($data['list'])) return ['status'=>'fail','log'=>['API trả về không hợp lệ'],'has_more'=>false,'done'=>0,'total'=>0];
+        $movies = $data['list'];
+        $total = count($movies);
+        $done = 0;
+        $has_more = $this->process_batch($movies, $offset, $batch_size, $log, $done, $total);
+        return [
+            'status' => 'success',
+            'log' => $log,
+            'has_more' => $has_more,
+            'done' => $done,
+            'total' => $total
+        ];
+    }
 }
+
